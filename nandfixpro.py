@@ -1685,14 +1685,59 @@ class SwitchGuiApp(tk.Tk):
         try:
             sd_drive = self._detect_switch_sd_card_wmi()
             if not sd_drive:
-                CustomDialog(self, title="SD Card Not Found", 
+                CustomDialog(self, title="SD Card Not Found",
                             message="Could not detect Switch SD card.\n\nPlease ensure:\n• SD card is mounted via Hekate USB tools\n• SD card contains /bootloader/ folder")
                 return
-            
+
+            # Perform all validation checks
             prod_keys_path = sd_drive / "switch" / "prod.keys"
-            if not prod_keys_path.exists():
-                CustomDialog(self, title="Keys Not Found", 
-                            message=f"Could not find prod.keys at:\n{prod_keys_path}\n\nPlease ensure you've backed up your keys using Hekate.")
+            prod_keys_found = prod_keys_path.exists()
+
+            restore_path = find_emmc_backup_folder(sd_drive)
+            backup_folder_found = restore_path is not None
+
+            # Check for PRODINFO (optional)
+            possible_prodinfo_paths = [
+                sd_drive / "switch" / "generated_prodinfo_from_donor.bin",
+                sd_drive / "switch" / "PRODINFO",
+                sd_drive / "switch" / "PRODINFO.bin",
+                sd_drive / "PRODINFO",
+                sd_drive / "PRODINFO.bin"
+            ]
+
+            donor_prodinfo_path = None
+            for path in possible_prodinfo_paths:
+                if path.exists():
+                    try:
+                        with open(path, 'rb') as f:
+                            if f.read(4) == b'CAL0':
+                                donor_prodinfo_path = path
+                                break
+                    except Exception as e:
+                        self._log(f"WARNING: Could not validate {path.name}: {e}")
+                        continue
+
+            prodinfo_found = donor_prodinfo_path is not None
+
+            # Build validation status message
+            check_mark = "✓"
+            cross_mark = "✗"
+
+            status_message = "SD Card Validation:\n\n"
+            status_message += f"  {check_mark if prod_keys_found else cross_mark}  prod.keys (MANDATORY)\n"
+            status_message += f"  {check_mark if backup_folder_found else cross_mark}  backup/[emmcID]/restore folder (MANDATORY)\n"
+            status_message += f"  {check_mark if prodinfo_found else cross_mark}  PRODINFO (Optional)\n\n"
+
+            # Check if mandatory items are present
+            if not prod_keys_found or not backup_folder_found:
+                status_message += "❌ Cannot proceed!\n\n"
+                if not prod_keys_found:
+                    status_message += f"Missing: prod.keys at {sd_drive / 'switch' / 'prod.keys'}\n"
+                if not backup_folder_found:
+                    status_message += f"Missing: backup/[alphanumeric]/restore folder\n"
+                status_message += "\nPlease ensure you've created a NAND backup using Hekate and backed up your keys."
+
+                CustomDialog(self, title="Validation Failed", message=status_message)
                 return
             
             # Save keys to temp directory
@@ -1706,30 +1751,8 @@ class SwitchGuiApp(tk.Tk):
             
             # Auto-populate the keys path
             self.paths["keys"].set(str(keys_temp_path))
-            
-            # NEW: Check for donor PRODINFO files on SD card (multiple possible names)
-            possible_prodinfo_paths = [
-                sd_drive / "switch" / "generated_prodinfo_from_donor.bin",
-                sd_drive / "switch" / "PRODINFO",
-                sd_drive / "switch" / "PRODINFO.bin",
-                sd_drive / "PRODINFO",
-                sd_drive / "PRODINFO.bin"
-            ]
-            
-            donor_prodinfo_path = None
-            for path in possible_prodinfo_paths:
-                if path.exists():
-                    try:
-                        # Validate the donor PRODINFO file
-                        with open(path, 'rb') as f:
-                            if f.read(4) == b'CAL0':
-                                donor_prodinfo_path = path
-                                break
-                    except Exception as e:
-                        self._log(f"WARNING: Could not validate {path.name}: {e}")
-                        continue
-            
-            prodinfo_found = False
+
+            # Process PRODINFO if found during validation
             if donor_prodinfo_path:
                 # Copy donor PRODINFO to temp directory
                 prodinfo_temp_path = Path(temp_base) / "PRODINFO"
@@ -1737,7 +1760,6 @@ class SwitchGuiApp(tk.Tk):
                 
                 # Auto-populate the PRODINFO path
                 self.paths["prodinfo"].set(str(prodinfo_temp_path))
-                prodinfo_found = True
 
                 # MODIFIED: Set the flag to indicate this PRODINFO came from SD
                 self.donor_prodinfo_from_sd = True
