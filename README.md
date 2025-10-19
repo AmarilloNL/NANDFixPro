@@ -198,6 +198,7 @@ This application is a graphical frontend that would not be possible without the 
 -   **[OSFMount](https://www.osforensics.com/tools/mount-disk-images.html)** by PassMark Software
 -   **[7-Zip](https://www.7-zip.org/)** by Igor Pavlov
 
+---
 
 ### Support My Work
 
