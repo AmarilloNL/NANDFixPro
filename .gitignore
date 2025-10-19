@@ -28,3 +28,7 @@ config.ini
 
 # Release pack
 *.zip
+
+installation.ini
+
+.claude/

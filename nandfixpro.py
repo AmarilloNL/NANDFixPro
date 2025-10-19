@@ -447,6 +447,9 @@ class PRODINFOEditorDialog(tk.Toplevel):
         ttk.Label(serial_frame, text="New:", style="Dark.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 5), pady=(5, 0))
         serial_entry = ttk.Entry(serial_frame, textvariable=self.serial_var, width=16, font=("Consolas", 9))
         serial_entry.grid(row=1, column=1, sticky="w", pady=(5, 0))
+
+        # Limit serial number to 14 characters
+        self.serial_var.trace_add("write", lambda *_: self._validate_serial_length())
         
         # Region section
         region_frame = ttk.LabelFrame(main_frame, text="WiFi Region", padding="10")
@@ -523,7 +526,13 @@ class PRODINFOEditorDialog(tk.Toplevel):
             color_hex = self.engine.get_color(color_key)
             self.color_vars[color_key].set(color_hex)
             self._update_color_preview(color_key)
-    
+
+    def _validate_serial_length(self):
+        """Limit serial number to 14 characters"""
+        current = self.serial_var.get()
+        if len(current) > 14:
+            self.serial_var.set(current[:14])
+
     def _update_color_preview(self, color_key):
         """Update color preview square"""
         try:
@@ -728,7 +737,7 @@ class CustomDialog(tk.Toplevel):
 class SwitchGuiApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.version = "2.0.0"
+        self.version = "2.0.1"
         self.title(f"NAND Fix Pro v{self.version}")
         self.geometry("650x700") # Changed height for a better fit
         self.resizable(False, False)
@@ -763,13 +772,16 @@ class SwitchGuiApp(tk.Tk):
         self.copy_boot_buttons = []
         self.advanced_user_button = None
         self.donor_prodinfo_from_sd = False
-        
+
         # --- INITIALIZATION ---
         self._setup_styles()
         self._load_config()
         self._setup_widgets()
         self._validate_paths_and_update_buttons()
         self.center_window()
+
+        # Set up cleanup on exit
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
         
     def _create_main_button_row(self, parent_frame, process_name, command, button_ref):
         """Creates the consistent row of three main buttons for each tab."""
@@ -805,10 +817,22 @@ class SwitchGuiApp(tk.Tk):
         """Displays and updates a progress bar on a single line in the log."""
         if hasattr(self, 'log_widget') and self.log_widget:
             self.log_widget.config(state="normal")
-            last_line = self.log_widget.get("end-2l", "end-1l")
-            if last_line.startswith("--- Progress:"):
-                self.log_widget.delete("end-2l", "end-1l")
-            self.log_widget.insert(tk.END, f"--- Progress: {progress_text}\n")
+
+            # Check if we have a progress line marker
+            if not hasattr(self, '_progress_line_index'):
+                # First time - insert a new line and use a mark to track it
+                self.log_widget.insert(tk.END, f"--- Progress: {progress_text}\n")
+                # Create a mark at the start of this line (gravity=left keeps it stable)
+                self.log_widget.mark_set("progress_mark", "end-2l linestart")
+                self.log_widget.mark_gravity("progress_mark", "left")
+                self._progress_line_index = True  # Flag to indicate we have a progress line
+            else:
+                # Update the existing progress line in place using the mark
+                line_start = "progress_mark"
+                line_end = f"{line_start} lineend"
+                self.log_widget.delete(line_start, line_end)
+                self.log_widget.insert(line_start, f"--- Progress: {progress_text}")
+
             self.log_widget.see(tk.END)
             self.log_widget.config(state="disabled")
             self.update_idletasks()
@@ -825,7 +849,7 @@ class SwitchGuiApp(tk.Tk):
             for line in iter(process.stdout.readline, ''):
                 clean_line = line.strip()
                 if not clean_line: continue
-                
+
                 match = progress_regex.search(clean_line)
                 if match:
                     percent = int(match.group(1))
@@ -836,12 +860,20 @@ class SwitchGuiApp(tk.Tk):
                 else:
                     output.append(clean_line)
                     self._log(clean_line)
-            
+
             process.stdout.close()
             return_code = process.wait()
+
+            # Clear progress tracker for next operation
+            if hasattr(self, '_progress_line_index'):
+                delattr(self, '_progress_line_index')
+
             self._log(f"--- {task_name} finished.")
             return return_code, "\n".join(output)
         except Exception as e:
+            # Clear progress tracker on error
+            if hasattr(self, '_progress_line_index'):
+                delattr(self, '_progress_line_index')
             self._log(f"FATAL ERROR: Failed to execute command. {e}")
             return -1, str(e)
 
@@ -860,16 +892,23 @@ class SwitchGuiApp(tk.Tk):
                         break
                     dest.write(chunk)
                     copied_size += len(chunk)
-                    
+
                     percent = int((copied_size / total_size) * 100)
                     bar_length = 25
                     filled_length = int(bar_length * percent / 100)
                     bar = '█' * filled_length + '-' * (bar_length - filled_length)
                     self._update_progress(f"{task_name}: [{bar}] {percent}%")
 
+            # Clear progress tracker for next operation
+            if hasattr(self, '_progress_line_index'):
+                delattr(self, '_progress_line_index')
+
             self._log(f"--- {task_name} finished.")
             return True
         except Exception as e:
+            # Clear progress tracker on error
+            if hasattr(self, '_progress_line_index'):
+                delattr(self, '_progress_line_index')
             self._log(f"ERROR: File copy failed. {e}")
             return False    
 
@@ -985,7 +1024,7 @@ class SwitchGuiApp(tk.Tk):
                     physical_disks = c.query(f"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partitions[0].DeviceID}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition")
                     if not physical_disks:
                         continue
-                    
+
                     # Now we have the parent physical disk, check its hardware ID
                     disk = physical_disks[0]
                     pnp_id = disk.PNPDeviceID or ""
@@ -1006,9 +1045,51 @@ class SwitchGuiApp(tk.Tk):
         except Exception as e:
             self._log(f"ERROR: A critical exception occurred during WMI SD card detection: {e}")
             return None
-            
+
         self._log("--- No Switch SD card with Hekate hardware ID was found.")
         return None
+
+    def _manual_select_sd_card(self):
+        """Prompt user to manually select the SD card drive when automatic detection fails."""
+        self._log("--- Prompting user for manual SD card selection...")
+
+        dialog = CustomDialog(
+            self,
+            title="SD Card Not Found",
+            message="Could not automatically detect Switch SD card.\n\nPlease ensure:\n• SD card is mounted via Hekate USB tools\n• SD card contains /bootloader/ folder\n\nWould you like to manually select the SD card?",
+            buttons="yesno"
+        )
+
+        if not dialog.result:
+            self._log("--- User declined manual SD card selection.")
+            return None
+
+        # Open folder selection dialog
+        sd_path = filedialog.askdirectory(
+            title="Select Switch SD Card Drive/Folder",
+            mustexist=True
+        )
+
+        if not sd_path:
+            self._log("--- User canceled SD card selection.")
+            return None
+
+        sd_path = Path(sd_path)
+        self._log(f"--- User selected path: {sd_path}")
+
+        # Validate the selected path has the bootloader folder
+        bootloader_path = sd_path / "bootloader"
+        if not bootloader_path.exists():
+            self._log(f"ERROR: Selected path does not contain /bootloader/ folder.")
+            CustomDialog(
+                self,
+                title="Invalid SD Card",
+                message=f"The selected folder does not contain a /bootloader/ folder.\n\nPlease select the root of your Switch SD card."
+            )
+            return None
+
+        self._log(f"--- SUCCESS: Manually selected SD card validated at: {sd_path}")
+        return sd_path
 
     def _detect_switch_drives_wmi(self):
             self._log("--- Detecting Switch eMMC using specific hardware IDs...")
@@ -1117,10 +1198,19 @@ class SwitchGuiApp(tk.Tk):
     def _load_config(self):
         """Loads paths from config.ini, running auto-detect if it doesn't exist."""
         config = configparser.ConfigParser()
+        # Paths that should be reset on each app launch
+        transient_paths = ["keys", "prodinfo", "firmware"]
+
         if Path(self.config_file).exists():
             config.read(self.config_file)
             for key in self.paths:
-                self.paths[key].set(config.get('Paths', key, fallback=''))
+                # Don't load transient paths from config - they should always start empty
+                if key in transient_paths:
+                    self.paths[key].set('')
+                else:
+                    self.paths[key].set(config.get('Paths', key, fallback=''))
+            # Save config to clear transient paths from config.ini
+            self._save_config()
         else:
             self._auto_detect_paths()
             self._save_config()
@@ -1383,37 +1473,83 @@ class SwitchGuiApp(tk.Tk):
 
     def _reset_application_state(self):
         """Resets the application to its initial state for a new run."""
-        dialog = CustomDialog(self, title="Confirm Reset", 
-                            message="Are you sure you want to reset the application?\n\nThis will clear the log and reset the entire workflow state.",
+        dialog = CustomDialog(self, title="Confirm Reset",
+                            message="Are you sure you want to reset the application?\n\nThis will clear the log, reset the entire workflow state, and delete all temporary files.",
                             buttons="yesno")
         if not dialog.result:
             self._log("--- Reset cancelled by user.")
             return
 
-        # 1. Reset the master state dictionary
+        # 1. Delete temporary files/folders created by NANDFixPro
+        deleted_items = []
+
+        # Delete prod.keys and PRODINFO files
+        try:
+            keys_path = self.paths['keys'].get()
+            if keys_path and os.path.exists(keys_path):
+                os.remove(keys_path)
+                deleted_items.append("prod.keys")
+        except Exception as e:
+            self._log(f"WARNING: Could not delete prod.keys: {e}")
+
+        try:
+            prodinfo_path = self.paths['prodinfo'].get()
+            if prodinfo_path and os.path.exists(prodinfo_path):
+                os.remove(prodinfo_path)
+                deleted_items.append("PRODINFO")
+        except Exception as e:
+            self._log(f"WARNING: Could not delete PRODINFO: {e}")
+
+        # Delete all switch_gui_* temp folders
+        if self.paths['temp_directory'].get():
+            temp_base = self.paths['temp_directory'].get()
+            try:
+                import shutil
+                import glob
+                # Find all switch_gui_* folders in the temp directory
+                temp_folders = glob.glob(os.path.join(temp_base, "switch_gui_*"))
+                deleted_count = 0
+                for folder in temp_folders:
+                    try:
+                        if os.path.isdir(folder):
+                            shutil.rmtree(folder)
+                            deleted_count += 1
+                    except Exception as e:
+                        self._log(f"WARNING: Could not delete temp folder {folder}: {e}")
+
+                if deleted_count > 0:
+                    deleted_items.append(f"{deleted_count} temp folder(s)")
+            except Exception as e:
+                self._log(f"WARNING: Error during temp folder cleanup: {e}")
+
+        if deleted_items:
+            self._log(f"INFO: Deleted {', '.join(deleted_items)}")
+
+        # 2. Reset the master state dictionary
         self.button_states = {
             "get_keys": "active",
-            "level1": "disabled", 
-            "level2": "disabled", 
+            "level1": "disabled",
+            "level2": "disabled",
             "level3": "disabled",
             "copy_boot": "disabled",
             "advanced_user": "disabled"
         }
-        
-        # 2. Clear the temporary keys and PRODINFO paths from the config
+
+        # 3. Clear the temporary keys, PRODINFO, and firmware paths from the config
         self.paths["keys"].set("")
         self.paths["prodinfo"].set("")
+        self.paths["firmware"].set("")
         self._save_config()
 
-        # 3. Reset the donor PRODINFO flag
+        # 4. Reset the donor PRODINFO flag
         self.donor_prodinfo_from_sd = False
 
-        # 4. Re-enable PRODINFO browse button and disable menu
+        # 5. Re-enable PRODINFO browse button and disable menu
 
-        # 5. Reset the last output directory variable
+        # 6. Reset the last output directory variable
         self.last_output_dir = None
-        
-        # 6. Clear the log and update the UI
+
+        # 7. Clear the log and update the UI
         self._clear_log()
         self._log("--- Application has been reset. Ready for a new operation. ---")
         self._validate_paths_and_update_buttons()               
@@ -1681,13 +1817,19 @@ class SwitchGuiApp(tk.Tk):
             self._re_enable_buttons()    
 
     def _get_keys_from_sd(self):
-        """Detect SD card and copy prod.keys to temp directory. For Level 3, also try to get donor PRODINFO."""
+        """Detect SD card and copy prod.keys to temp directory. Detects and imports donor PRODINFO ONLY when on Level 3 tab."""
         try:
             sd_drive = self._detect_switch_sd_card_wmi()
             if not sd_drive:
-                CustomDialog(self, title="SD Card Not Found",
-                            message="Could not detect Switch SD card.\n\nPlease ensure:\n• SD card is mounted via Hekate USB tools\n• SD card contains /bootloader/ folder")
-                return
+                # Try manual selection as fallback
+                sd_drive = self._manual_select_sd_card()
+                if not sd_drive:
+                    return
+
+            # Check which tab is currently active
+            current_tab = self.tab_control.select()
+            level3_tab_id = self.tab_control.tabs()[2]  # Level 3 is the third tab (index 2)
+            is_level3 = (current_tab == level3_tab_id)
 
             # Perform all validation checks
             prod_keys_path = sd_drive / "switch" / "prod.keys"
@@ -1696,28 +1838,31 @@ class SwitchGuiApp(tk.Tk):
             restore_path = find_emmc_backup_folder(sd_drive)
             backup_folder_found = restore_path is not None
 
-            # Check for PRODINFO (optional)
-            possible_prodinfo_paths = [
-                sd_drive / "switch" / "generated_prodinfo_from_donor.bin",
-                sd_drive / "switch" / "PRODINFO",
-                sd_drive / "switch" / "PRODINFO.bin",
-                sd_drive / "PRODINFO",
-                sd_drive / "PRODINFO.bin"
-            ]
-
+            # Check for PRODINFO only if on Level 3 tab (since it's only relevant for Level 3)
             donor_prodinfo_path = None
-            for path in possible_prodinfo_paths:
-                if path.exists():
-                    try:
-                        with open(path, 'rb') as f:
-                            if f.read(4) == b'CAL0':
-                                donor_prodinfo_path = path
-                                break
-                    except Exception as e:
-                        self._log(f"WARNING: Could not validate {path.name}: {e}")
-                        continue
+            prodinfo_found = False
 
-            prodinfo_found = donor_prodinfo_path is not None
+            if is_level3:
+                possible_prodinfo_paths = [
+                    sd_drive / "switch" / "generated_prodinfo_from_donor.bin",
+                    sd_drive / "switch" / "PRODINFO",
+                    sd_drive / "switch" / "PRODINFO.bin",
+                    sd_drive / "PRODINFO",
+                    sd_drive / "PRODINFO.bin"
+                ]
+
+                for path in possible_prodinfo_paths:
+                    if path.exists():
+                        try:
+                            with open(path, 'rb') as f:
+                                if f.read(4) == b'CAL0':
+                                    donor_prodinfo_path = path
+                                    break
+                        except Exception as e:
+                            self._log(f"WARNING: Could not validate {path.name}: {e}")
+                            continue
+
+                prodinfo_found = donor_prodinfo_path is not None
 
             # Build validation status message
             check_mark = "✓"
@@ -1726,7 +1871,12 @@ class SwitchGuiApp(tk.Tk):
             status_message = "SD Card Validation:\n\n"
             status_message += f"  {check_mark if prod_keys_found else cross_mark}  prod.keys (MANDATORY)\n"
             status_message += f"  {check_mark if backup_folder_found else cross_mark}  backup/[emmcID]/restore folder (MANDATORY)\n"
-            status_message += f"  {check_mark if prodinfo_found else cross_mark}  PRODINFO (Optional)\n\n"
+
+            # Only show PRODINFO status if on Level 3 tab
+            if is_level3:
+                status_message += f"  {check_mark if prodinfo_found else cross_mark}  PRODINFO (Optional for Level 3)\n\n"
+            else:
+                status_message += "\n"
 
             # Check if mandatory items are present
             if not prod_keys_found or not backup_folder_found:
@@ -1752,29 +1902,29 @@ class SwitchGuiApp(tk.Tk):
             # Auto-populate the keys path
             self.paths["keys"].set(str(keys_temp_path))
 
-            # Process PRODINFO if found during validation
-            if donor_prodinfo_path:
+            # Process PRODINFO only if found during validation (only happens on Level 3 tab)
+            if donor_prodinfo_path and is_level3:
                 # Copy donor PRODINFO to temp directory
                 prodinfo_temp_path = Path(temp_base) / "PRODINFO"
                 shutil.copy2(donor_prodinfo_path, prodinfo_temp_path)
-                
+
                 # Auto-populate the PRODINFO path
                 self.paths["prodinfo"].set(str(prodinfo_temp_path))
 
                 # MODIFIED: Set the flag to indicate this PRODINFO came from SD
                 self.donor_prodinfo_from_sd = True
-                
+
                 # Disable the PRODINFO browse button if it exists
                 if self.prodinfo_browse_button:
                     self.prodinfo_browse_button.config(state="disabled")
-                
+
                 self._log(f"SUCCESS: Donor PRODINFO imported from SD card: {donor_prodinfo_path.name}")
-                
+
                 # Show popup asking if user wants to edit the PRODINFO
-                dialog = CustomDialog(self, title="Donor PRODINFO Detected", 
+                dialog = CustomDialog(self, title="Donor PRODINFO Detected",
                                     message=f"Found donor PRODINFO file: {donor_prodinfo_path.name}\n\nWould you like to edit it (serial, colors, WiFi region) before using in Level 3?",
                                     buttons="yesno")
-                
+
                 if dialog.result:
                     # User wants to edit - open editor immediately after this function completes
                     self.after(100, self._open_prodinfo_editor)  # Delay to ensure dialog cleanup
@@ -1790,17 +1940,17 @@ class SwitchGuiApp(tk.Tk):
             self._validate_paths_and_update_buttons()
             
             # Create appropriate success message
-            if prodinfo_found:
+            if prodinfo_found and is_level3:
                 message = ("Keys and donor PRODINFO obtained!\n\n"
-                        "Both prod.keys and generated_prodinfo_from_donor.bin were found and imported.\n\n"
+                        "Both prod.keys and donor PRODINFO were found and imported.\n\n"
                         "Please right-click the SD card drive in Windows Explorer and select 'Eject', "
                         "then connect your Switch in eMMC RAW GPP mode.")
             else:
                 message = ("Keys obtained!\n\n"
-                        "prod.keys was imported (no donor PRODINFO found on SD card).\n\n"
+                        f"prod.keys was imported successfully.\n\n"
                         "Please right-click the SD card drive in Windows Explorer and select 'Eject', "
                         "then connect your Switch in eMMC RAW GPP mode.")
-            
+
             CustomDialog(self, title="Import Complete", message=message)
             
         except Exception as e:
@@ -1828,9 +1978,10 @@ class SwitchGuiApp(tk.Tk):
             # Detect SD card
             sd_drive = self._detect_switch_sd_card_wmi()
             if not sd_drive:
-                CustomDialog(self, title="SD Card Not Found", 
-                             message="Could not detect Switch SD card.\n\nPlease ensure SD card is mounted via Hekate USB tools.")
-                return
+                # Try manual selection as fallback
+                sd_drive = self._manual_select_sd_card()
+                if not sd_drive:
+                    return
             
             # Find restore folder
             restore_path = find_emmc_backup_folder(sd_drive)
@@ -1852,15 +2003,30 @@ class SwitchGuiApp(tk.Tk):
             # Copy files
             shutil.copy2(boot0_path, restore_path / "BOOT0")
             shutil.copy2(boot1_path, restore_path / "BOOT1")
-            
+
             self._log(f"SUCCESS: BOOT files copied to {restore_path}")
-            
+
             # --- FIX: Clean up the entire temporary directory ---
             if safe_remove_directory(output_path):
                 self._log(f"INFO: Cleaned up temporary directory: {output_path}")
             self.last_output_dir = None # Reset the path after cleanup
 
-            CustomDialog(self, title="Files Copied", 
+            # Delete prod.keys and PRODINFO files after successful completion
+            try:
+                keys_path = self.paths['keys'].get()
+                if keys_path and os.path.exists(keys_path):
+                    os.remove(keys_path)
+            except Exception as e:
+                pass  # Silent cleanup
+
+            try:
+                prodinfo_path = self.paths['prodinfo'].get()
+                if prodinfo_path and os.path.exists(prodinfo_path):
+                    os.remove(prodinfo_path)
+            except Exception as e:
+                pass  # Silent cleanup
+
+            CustomDialog(self, title="Files Copied",
                          message=f"BOOT0 and BOOT1 successfully copied to:\n{restore_path}\n\nPlease manually eject the SD card. You can now restore them using Hekate.")
 
             # Update button state
@@ -2009,9 +2175,39 @@ class SwitchGuiApp(tk.Tk):
         # Re-enable PRODINFO menu if appropriate
         if self._is_path_valid("prodinfo"):
             self._enable_prodinfo_menu()
+
+    def _on_closing(self):
+        """Handle application closing - clean up temp directory and temporary files."""
+        try:
+            # Clean up prod.keys and PRODINFO files
+            try:
+                keys_path = self.paths['keys'].get()
+                if keys_path and os.path.exists(keys_path):
+                    os.remove(keys_path)
+            except Exception as e:
+                pass  # Silent cleanup
+
+            try:
+                prodinfo_path = self.paths['prodinfo'].get()
+                if prodinfo_path and os.path.exists(prodinfo_path):
+                    os.remove(prodinfo_path)
+            except Exception as e:
+                pass  # Silent cleanup
+
+            # Clean up the last temp directory if it exists and wasn't copied to SD
+            if hasattr(self, 'last_output_dir') and self.last_output_dir and os.path.exists(self.last_output_dir):
+                self._log(f"\nINFO: Cleaning up temporary directory on exit: {self.last_output_dir}")
+                shutil.rmtree(self.last_output_dir)
+                self._log("INFO: Cleanup complete.")
+        except Exception as e:
+            # Don't block closing if cleanup fails
+            print(f"Warning: Could not clean up temp directory on exit: {e}")
+        finally:
+            self.destroy()
             
     def _start_level3_process(self):
         self._log("--- Starting Level 3 Complete Recovery Process ---")
+        temp_dir = None
         try:
             pythoncom.CoInitialize() # <--- ADD THIS LINE
             # Use custom temp directory if set
@@ -2021,20 +2217,33 @@ class SwitchGuiApp(tk.Tk):
                 temp_dir = os.path.join(temp_base, temp_dir_name)
                 os.makedirs(temp_dir, exist_ok=True)
                 self._log(f"INFO: Using custom temporary directory at: {temp_dir}")
-                try:
-                    self._run_level3_process(temp_dir)
-                finally:
-                    # Clean up manually created temp directory
-                    if os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir)
-                        self._log(f"INFO: Cleaned up temporary directory: {temp_dir}")
             else:
-                with tempfile.TemporaryDirectory(prefix="switch_gui_level3_") as temp_dir:
-                    self._log(f"INFO: Created temporary directory at: {temp_dir}")
-                    self._run_level3_process(temp_dir)
+                # CHANGED: Don't use context manager - create temp dir manually
+                temp_dir_name = f"switch_gui_level3_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                temp_dir = os.path.join(tempfile.gettempdir(), temp_dir_name)
+                os.makedirs(temp_dir, exist_ok=True)
+                self._log(f"INFO: Created temporary directory at: {temp_dir}")
+
+            # Run the process
+            self._run_level3_process(temp_dir)
+
+            # --- THIS IS THE FIX ---
+            # Save the successful output path for the copy button to use
+            self.last_output_dir = temp_dir
+
+            self._log(f"INFO: BOOT files saved to: {temp_dir}")
+            self._log(f"INFO: Temp directory will be cleaned after copying BOOT files to SD.")
+
         except Exception as e:
             self._log(f"An unexpected critical error occurred: {e}\n{traceback.format_exc()}")
-            self._log("\nINFO: Level 3 process finished with an error.")
+            self._log(f"\nINFO: Level 3 process finished with an error.")
+            # Clean up temp directory if process failed
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    self._log(f"INFO: Cleaned up temporary directory after error: {temp_dir}")
+                except Exception as cleanup_error:
+                    self._log(f"WARNING: Could not clean up temp directory: {cleanup_error}")
         finally:
             self._re_enable_buttons()
 
@@ -2266,12 +2475,11 @@ class SwitchGuiApp(tk.Tk):
             return
         
         self._log(f"\n[STEP 8/8] Saving BOOT0 & BOOT1 to output folder...")
-        
+
         shutil.copy(versioned_folder / "BOOT0.bin", Path(temp_dir) / "BOOT0")
         shutil.copy(versioned_folder / "BOOT1.bin", Path(temp_dir) / "BOOT1")
         self._log(f"SUCCESS: BOOT0 and BOOT1 saved to {temp_dir}")
-        self.last_output_dir = temp_dir
-        
+
         self._log(f"\n[STEP 8/8] Level 3 Recovery Complete!")
         self._log("IMPORTANT: Please flash BOOT0 and BOOT1 manually using Hekate for safety.")
         self._log("Your Switch should now boot with the reconstructed NAND.")
@@ -2499,9 +2707,10 @@ class SwitchGuiApp(tk.Tk):
     
     def _start_process(self, level):
         self._log(f"--- Starting {level} Process ---")
+        temp_dir = None
         try:
             pythoncom.CoInitialize()
-            
+
             if self.paths['temp_directory'].get():
                 temp_base = self.paths['temp_directory'].get()
                 temp_dir_name = f"switch_gui_{level.lower().replace(' ', '')}{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -2514,23 +2723,30 @@ class SwitchGuiApp(tk.Tk):
                 temp_dir = os.path.join(tempfile.gettempdir(), temp_dir_name)
                 os.makedirs(temp_dir, exist_ok=True)
                 self._log(f"INFO: Created temporary directory at: {temp_dir}")
-            
+
             # Run the process
             if level == "Level 1":
                 self._run_level1_process(temp_dir)
             elif level == "Level 2":
                 self._run_level2_process(temp_dir)
-            
+
             # --- THIS IS THE FIX ---
             # Save the successful output path for the copy button to use
             self.last_output_dir = temp_dir
-            
+
             self._log(f"INFO: BOOT files saved to: {temp_dir}")
             self._log(f"INFO: Temp directory will be cleaned after copying BOOT files to SD.")
-                 
+
         except Exception as e:
             self._log(f"An unexpected critical error occurred: {e}\n{traceback.format_exc()}")
             self._log(f"\nINFO: {level} process finished with an error.")
+            # Clean up temp directory if process failed
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    self._log(f"INFO: Cleaned up temporary directory after error: {temp_dir}")
+                except Exception as cleanup_error:
+                    self._log(f"WARNING: Could not clean up temp directory: {cleanup_error}")
         finally:
             self._re_enable_buttons()
 
