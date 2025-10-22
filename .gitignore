@@ -11,7 +11,7 @@ Releases/
 
 # Build artifacts
 # Ignore the compiled launcher since it's generated from source
-Launcher.exe
+*.exe
 dist/
 build/
 
@@ -31,4 +31,4 @@ config.ini
 
 installation.ini
 
-.claude/
+
