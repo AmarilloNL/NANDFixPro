@@ -1,4 +1,4 @@
-# NAND Fix Pro v2.0.3 - Complete Usage Guide
+# NAND Fix Pro v2.0.4 - Complete Usage Guide
 
 ## Table of Contents
 1. Introduction & Safety
@@ -6,12 +6,13 @@
 3. Prerequisites (File & Hardware Checklist)
 4. The In-App Workflow
 5. Understanding the Repair Levels
-6. PRODINFO Editor
-7. Settings & Configuration
-8. Step-by-Step Procedures
-9. Troubleshooting
-10. FAQ
-11. Final Notes
+6. Advanced: File Mode (Remote NAND Repair)
+7. PRODINFO Editor
+8. Settings & Configuration
+9. Step-by-Step Procedures
+10. Troubleshooting
+11. FAQ
+12. Final Notes
 
 ---
 
@@ -105,7 +106,70 @@ This is the nuclear option for completely dead consoles. Your Switch will work b
 
 ---
 
-## 6. PRODINFO Editor
+## 6. Advanced: File Mode (Remote NAND Repair)
+
+### What is File Mode?
+File Mode allows you to repair a RawNAND file without needing physical access to the console. This is useful for:
+- Remote NAND repair (someone sends you their NAND dump)
+- Offline processing and testing
+- Preparing a fixed NAND in advance
+- Learning and experimentation without risk to hardware
+
+### How to Access File Mode
+Click on the **"Advanced: File Mode"** tab at the top of the application.
+
+### What You Need for File Mode
+1. **RawNAND Input File**: A complete rawnand.bin dump from the Switch
+2. **Output Directory**: Where the repaired files will be saved
+3. **Firmware Folder**: Same firmware package used in other levels
+4. **Keys File**: Still required (get it using "Get Keys from SD")
+5. **Additional files** (depending on level):
+   - Level 2: Donor partition archives (USER, SYSTEM, etc.)
+   - Level 3: Donor PRODINFO file
+
+### File Mode Workflow
+
+**Level 1: Fix SYSTEM in RawNAND**
+1. Select your rawnand.bin file
+2. Choose an output directory
+3. Select firmware folder
+4. Click "Process File: Level 1"
+5. Output: `rawnand_fixed.bin`, `boot0`, `boot1`
+
+**Level 2: Full Rebuild from RawNAND**
+1. Select your rawnand.bin file
+2. Choose an output directory
+3. Select firmware folder
+4. Click "Process File: Level 2"
+5. Output: `rawnand_rebuilt.bin`, `boot0`, `boot1`
+
+**Level 3: Complete Reconstruction**
+1. Select your rawnand.bin file (or any placeholder NAND)
+2. Choose an output directory
+3. Select firmware folder and donor PRODINFO
+4. Click "Process File: Level 3"
+5. Output: `rawnand_reconstructed.bin`, `boot0`, `boot1`
+
+### Flashing the Repaired NAND
+After file mode processing completes:
+
+**Option 1: Flash entire RawNAND**
+- Use Hekate's "Restore eMMC → eMMC RAW GPP" to flash the output rawnand file
+
+**Option 2: Flash just boot files**
+- Copy boot0 and boot1 to SD card's `/backup/[emmcID]/restore/` folder
+- In Hekate: Tools → Restore eMMC → eMMC BOOT0 & BOOT1
+
+### Important Notes
+- File mode processes can take 30+ minutes for large NANDs
+- Requires 60GB free disk space (same as direct mode)
+- The original input file is never modified (read-only)
+- All outputs are saved to your chosen output directory
+- You can run multiple repairs with different settings
+
+---
+
+## 7. PRODINFO Editor
 
 ### What is the PRODINFO Editor?
 The PRODINFO Editor is an integrated tool that allows you to modify your Switch's PRODINFO (calibration) data before using it in a Level 3 recovery. This is useful for customizing donor PRODINFO files.
@@ -169,7 +233,7 @@ Recommended order:
 
 ---
 
-## 7. Settings & Configuration
+## 8. Settings & Configuration
 
 ### Accessing Settings
 The Settings menu is located in the top menu bar of the application. Click "Settings" to access configuration options for customizing the tool's behavior.
@@ -241,7 +305,7 @@ All settings (including custom temp directory) are saved to a `config.json` file
 
 ---
 
-## 8. Step-by-Step Procedures
+## 9. Step-by-Step Procedures
 
 ### For All Levels - The Basic Process
 
@@ -280,7 +344,7 @@ All settings (including custom temp directory) are saved to a `config.json` file
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### Common Issues and Solutions
 
@@ -318,7 +382,7 @@ PRODINFO Editor menu is grayed out
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 ### Frequently Asked Questions
 
@@ -346,9 +410,21 @@ A: The tool checks for 60GB of free space before starting any process. If space 
 Q: Where are temporary files stored by default?
 A: By default, they're stored in your system's temp directory (typically C:\Users\YourName\AppData\Local\Temp\). All temp folders created by NAND Fix Pro follow the pattern `switch_gui_*` with timestamps.
 
+Q: What is File Mode and when should I use it?
+A: File Mode allows you to repair RawNAND files without connecting a Switch. It's perfect for remote repairs, offline processing, or helping someone else fix their NAND. Access it via the "Advanced: File Mode" tab.
+
+Q: Can I use File Mode without a Switch console?
+A: Yes! You only need the rawnand.bin file, keys, and firmware. This makes it possible to repair NANDs for other people remotely.
+
+Q: Does File Mode modify my original RawNAND file?
+A: No, the original file is never modified. File Mode creates new output files in your chosen output directory.
+
+Q: Can I flash the file mode output back to my Switch?
+A: Yes! Use Hekate's "Restore eMMC → eMMC RAW GPP" for the full rawnand file, or flash just the boot0/boot1 files using the normal boot restore process.
+
 ---
 
-## 11. Final Notes
+## 12. Final Notes
 
 ### Important Reminders
 
@@ -368,6 +444,22 @@ Remember that Level 3 repairs permanently affect your console's ability to use o
 - When using the PRODINFO Editor, always verify integrity after making changes
 - If your system drive is low on space, configure a custom temp directory before starting
 - The tool will automatically verify you have 60GB free before processing begins
+
+### What's New in v2.0.4
+
+**New Feature: Advanced File Mode**
+- Work with RawNAND files offline without connecting your Switch
+- Perfect for remote NAND repair scenarios
+- Process files for Level 1, Level 2, and Level 3 repairs
+- Generates repaired rawnand.bin plus boot0/boot1 files
+- Original files are never modified (read-only operation)
+
+**How to Use File Mode:**
+- Navigate to the new "Advanced: File Mode" tab
+- Select your rawnand.bin input file
+- Choose an output directory
+- Click the appropriate "Process File: Level X" button
+- Flash the output files using Hekate's restore functions
 
 ### What's New in v2.0.3
 
