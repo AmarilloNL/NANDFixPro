@@ -6,7 +6,7 @@
 3. Prerequisites (File & Hardware Checklist)
 4. The In-App Workflow
 5. Understanding the Repair Levels
-6. Advanced: File Mode (Remote NAND Repair)
+6. emuMMC Support (New in v2.0.4)
 7. PRODINFO Editor
 8. Settings & Configuration
 9. Step-by-Step Procedures
@@ -106,66 +106,51 @@ This is the nuclear option for completely dead consoles. Your Switch will work b
 
 ---
 
-## 6. Advanced: File Mode (Remote NAND Repair)
+## 6. emuMMC Support (New in v2.0.4)
 
-### What is File Mode?
-File Mode allows you to repair a RawNAND file without needing physical access to the console. This is useful for:
-- Remote NAND repair (someone sends you their NAND dump)
-- Offline processing and testing
-- Preparing a fixed NAND in advance
-- Learning and experimentation without risk to hardware
+### What is emuMMC?
+emuMMC (emulated MMC) is a feature in Hekate that allows you to run custom firmware from a copy of your NAND stored on your SD card, keeping your physical eMMC untouched. This is commonly used to maintain a clean system NAND while running homebrew on the emuMMC.
 
-### How to Access File Mode
-Click on the **"Advanced: File Mode"** tab at the top of the application.
+### Automatic Detection
+NAND Fix Pro v2.0.4 now automatically detects whether you're working with:
+- **Physical eMMC** (USBSTOR\DISK&VEN_HEKATE&PROD_EMMC_GPP)
+- **emuMMC Raw Partition** (USBSTOR\DISK&VEN_HEKATE&PROD_SD_GPP)
 
-### What You Need for File Mode
-1. **RawNAND Input File**: A complete rawnand.bin dump from the Switch
-2. **Output Directory**: Where the repaired files will be saved
-3. **Firmware Folder**: Same firmware package used in other levels
-4. **Keys File**: Still required (get it using "Get Keys from SD")
-5. **Additional files** (depending on level):
-   - Level 2: Donor partition archives (USER, SYSTEM, etc.)
-   - Level 3: Donor PRODINFO file
+No configuration is needed - the tool identifies the drive type when you connect your Switch in Hekate UMS mode.
 
-### File Mode Workflow
+### How It Works
 
-**Level 1: Fix SYSTEM in RawNAND**
-1. Select your rawnand.bin file
-2. Choose an output directory
-3. Select firmware folder
-4. Click "Process File: Level 1"
-5. Output: `rawnand_fixed.bin`, `boot0`, `boot1`
+**During Repair Process:**
+1. Connect your Switch in Hekate UMS mode (eMMC RAW GPP or SD Raw for emuMMC)
+2. NAND Fix Pro automatically detects the drive type
+3. The confirmation dialog shows whether you're working with "eMMC" or "emuMMC Raw (SD GPP)"
+4. Proceed with Level 1, 2, or 3 repair as normal
 
-**Level 2: Full Rebuild from RawNAND**
-1. Select your rawnand.bin file
-2. Choose an output directory
-3. Select firmware folder
-4. Click "Process File: Level 2"
-5. Output: `rawnand_rebuilt.bin`, `boot0`, `boot1`
+**When Copying Boot Files:**
+After completing a repair, the "Copy BOOT to SD" button intelligently places files based on what was detected:
 
-**Level 3: Complete Reconstruction**
-1. Select your rawnand.bin file (or any placeholder NAND)
-2. Choose an output directory
-3. Select firmware folder and donor PRODINFO
-4. Click "Process File: Level 3"
-5. Output: `rawnand_reconstructed.bin`, `boot0`, `boot1`
+- **For physical eMMC:**
+  - Files go to: `backup/[emmcID]/restore/`
 
-### Flashing the Repaired NAND
-After file mode processing completes:
+- **For emuMMC raw:**
+  - Files go to: `backup/[emmcID]/restore/emummc/`
+  - The `emummc` subdirectory is automatically created if it doesn't exist
 
-**Option 1: Flash entire RawNAND**
-- Use Hekate's "Restore eMMC → eMMC RAW GPP" to flash the output rawnand file
+### Restoring Boot Files
 
-**Option 2: Flash just boot files**
-- Copy boot0 and boot1 to SD card's `/backup/[emmcID]/restore/` folder
-- In Hekate: Tools → Restore eMMC → eMMC BOOT0 & BOOT1
+**For physical eMMC:**
+1. In Hekate: Tools → Restore eMMC → eMMC BOOT0 & BOOT1
+
+**For emuMMC:**
+1. In Hekate: Tools → Restore eMMC → eMMC BOOT0 & BOOT1
+2. Make sure you're pointing to the emuMMC location, not physical eMMC
 
 ### Important Notes
-- File mode processes can take 30+ minutes for large NANDs
-- Requires 60GB free disk space (same as direct mode)
-- The original input file is never modified (read-only)
-- All outputs are saved to your chosen output directory
-- You can run multiple repairs with different settings
+- Works with all three repair levels (Level 1, 2, and 3)
+- No special configuration or settings required
+- The detection is automatic and happens during the eMMC connection phase
+- Both eMMC and emuMMC can be repaired using the same workflow
+- The tool remembers which type was used for the current session
 
 ---
 
@@ -410,17 +395,11 @@ A: The tool checks for 60GB of free space before starting any process. If space 
 Q: Where are temporary files stored by default?
 A: By default, they're stored in your system's temp directory (typically C:\Users\YourName\AppData\Local\Temp\). All temp folders created by NAND Fix Pro follow the pattern `switch_gui_*` with timestamps.
 
-Q: What is File Mode and when should I use it?
-A: File Mode allows you to repair RawNAND files without connecting a Switch. It's perfect for remote repairs, offline processing, or helping someone else fix their NAND. Access it via the "Advanced: File Mode" tab.
+Q: Does this tool support emuMMC?
+A: Yes! As of v2.0.4, NAND Fix Pro automatically detects emuMMC raw partitions and places boot files in the correct location (`backup/[emmcID]/restore/emummc/`).
 
-Q: Can I use File Mode without a Switch console?
-A: Yes! You only need the rawnand.bin file, keys, and firmware. This makes it possible to repair NANDs for other people remotely.
-
-Q: Does File Mode modify my original RawNAND file?
-A: No, the original file is never modified. File Mode creates new output files in your chosen output directory.
-
-Q: Can I flash the file mode output back to my Switch?
-A: Yes! Use Hekate's "Restore eMMC → eMMC RAW GPP" for the full rawnand file, or flash just the boot0/boot1 files using the normal boot restore process.
+Q: How do I know if I'm repairing eMMC or emuMMC?
+A: The tool automatically detects the drive type when you connect it in Hekate UMS mode. The confirmation dialog will show either "eMMC GPP" or "emuMMC Raw (SD GPP)".
 
 ---
 
@@ -447,19 +426,19 @@ Remember that Level 3 repairs permanently affect your console's ability to use o
 
 ### What's New in v2.0.4
 
-**New Feature: Advanced File Mode**
-- Work with RawNAND files offline without connecting your Switch
-- Perfect for remote NAND repair scenarios
-- Process files for Level 1, Level 2, and Level 3 repairs
-- Generates repaired rawnand.bin plus boot0/boot1 files
-- Original files are never modified (read-only operation)
+**New Feature: emuMMC Raw Partition Support**
+- Automatic detection of emuMMC raw partitions exposed through Hekate UMS mode
+- Smart boot file placement based on detected drive type
+- Full support for repairing emuMMC using all three repair levels
+- No configuration needed - detection is fully automatic
 
-**How to Use File Mode:**
-- Navigate to the new "Advanced: File Mode" tab
-- Select your rawnand.bin input file
-- Choose an output directory
-- Click the appropriate "Process File: Level X" button
-- Flash the output files using Hekate's restore functions
+**Key Features:**
+- Detects both physical eMMC (PROD_EMMC_GPP) and emuMMC raw (PROD_SD_GPP)
+- Boot files automatically placed in correct location:
+  - eMMC: `backup/[emmcID]/restore/`
+  - emuMMC: `backup/[emmcID]/restore/emummc/`
+- Enhanced user interface showing detected drive type
+- Seamless workflow for both eMMC and emuMMC repairs
 
 ### What's New in v2.0.3
 
