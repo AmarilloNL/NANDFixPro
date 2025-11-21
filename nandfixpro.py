@@ -61,15 +61,31 @@ def safe_remove_directory(directory_path):
 
 
 
-def find_emmc_backup_folder(sd_drive):
-    """Find the backup/[emmcID]/restore folder structure."""
+def find_emmc_backup_folder(sd_drive, is_emummc=False):
+    """Find the backup/[emmcID]/restore folder structure.
+
+    Args:
+        sd_drive: Path to the SD card drive
+        is_emummc: If True, looks for or creates backup/[emmcID]/restore/emummc
+                   If False, uses backup/[emmcID]/restore
+
+    Returns:
+        Path to the restore folder (or restore/emummc for emuMMC)
+    """
     backup_path = sd_drive / "backup"
     if backup_path.exists():
         for folder in backup_path.iterdir():
             if folder.is_dir() and folder.name.isalnum() and len(folder.name) >= 6:  # emmcID is alphanumeric
                 restore_path = folder / "restore"
                 if restore_path.exists():
-                    return restore_path
+                    if is_emummc:
+                        # For emuMMC, use the emummc subdirectory
+                        emummc_path = restore_path / "emummc"
+                        # Create the emummc subdirectory if it doesn't exist
+                        emummc_path.mkdir(exist_ok=True)
+                        return emummc_path
+                    else:
+                        return restore_path
     return None
 
 
@@ -858,6 +874,9 @@ class SwitchGuiApp(tk.Tk):
         self.advanced_user_button = None
         self.donor_prodinfo_from_sd = False
 
+        # Track the last target drive type (eMMC or emuMMC)
+        self.last_target_drive_type = None
+
         # Console type override variables
         self.override_console_type = tk.BooleanVar(value=False)
         self.manual_console_type = tk.StringVar(value="")
@@ -1181,14 +1200,14 @@ class SwitchGuiApp(tk.Tk):
         return sd_path
 
     def _detect_switch_drives_wmi(self):
-            self._log("--- Detecting Switch eMMC using specific hardware IDs...")
+            self._log("--- Detecting Switch eMMC/emuMMC using specific hardware IDs...")
             try:
                 import wmi
             except ImportError:
                 self._log("ERROR: The 'wmi' library is required. Please run 'pip install wmi' from a command prompt.")
                 CustomDialog(self, title="Dependency Error", message="The 'wmi' library is not installed.\nPlease run 'pip install wmi' in a command prompt.")
                 return []
-            
+
             c = wmi.WMI()
             potential_drives = []
             for disk in c.Win32_DiskDrive():
@@ -1196,23 +1215,30 @@ class SwitchGuiApp(tk.Tk):
                 # The PNPDeviceID is the most reliable identifier. We look for the unique strings
                 # from Hekate's UMS implementation for the eMMC.
                 # e.g., "USBSTOR\\DISK&VEN_HEKATE&PROD_EMMC_GPP&REV_1.00\\..."
-                if "VEN_HEKATE" in pnp_id and "PROD_EMMC_GPP" in pnp_id:
+                # Also detect emuMMC raw:
+                # e.g., "USBSTOR\\DISK&VEN_HEKATE&PROD_SD_GPP&REV_1.00\\C7C09242F703&0"
+                is_emmc = "VEN_HEKATE" in pnp_id and "PROD_EMMC_GPP" in pnp_id
+                is_emummc_raw = "VEN_HEKATE" in pnp_id and "PROD_SD_GPP" in pnp_id
+
+                if is_emmc or is_emummc_raw:
                     try:
                         size_gb = int(disk.Size) / (1024**3)
+                        drive_type = "eMMC GPP" if is_emmc else "emuMMC Raw (SD GPP)"
                         drive_info = {
                             "path": disk.DeviceID,
                             "size": f"{size_gb:.2f} GB",
                             "size_gb": size_gb,
-                            "model": disk.Model
+                            "model": disk.Model,
+                            "type": drive_type
                         }
                         potential_drives.append(drive_info)
-                        self._log(f"--- Found Switch eMMC GPP drive: {drive_info['path']} ({drive_info['size']})")
+                        self._log(f"--- Found Switch {drive_type} drive: {drive_info['path']} ({drive_info['size']})")
                     except Exception as e:
-                        self._log(f"WARNING: Found Hekate eMMC device but could not get its size. Error: {e}")
+                        self._log(f"WARNING: Found Hekate device but could not get its size. Error: {e}")
                         continue # Skip if size calculation fails
 
             if not potential_drives:
-                self._log("--- No Switch eMMC GPP drive with Hekate hardware ID was found.")
+                self._log("--- No Switch eMMC/emuMMC GPP drive with Hekate hardware ID was found.")
             return potential_drives    
 
     def _setup_widgets(self):
@@ -1641,6 +1667,7 @@ class SwitchGuiApp(tk.Tk):
 
         # 7. Reset the last output directory variable
         self.last_output_dir = None
+        self.last_target_drive_type = None
 
         # 8. Clear the log and update the UI
         self._clear_log()
@@ -2096,15 +2123,20 @@ class SwitchGuiApp(tk.Tk):
                 if not sd_drive:
                     return
             
-            # Find restore folder
-            restore_path = find_emmc_backup_folder(sd_drive)
+            # Determine if target was emuMMC based on stored drive type
+            is_emummc = self.last_target_drive_type and "emuMMC" in self.last_target_drive_type
+
+            # Find restore folder (with emummc subdirectory if needed)
+            restore_path = find_emmc_backup_folder(sd_drive, is_emummc=is_emummc)
             if not restore_path:
-                CustomDialog(self, title="Backup Folder Not Found", 
-                             message="Could not find backup/[emmcID]/restore folder on SD card.\n\nPlease ensure you've created a NAND backup using Hekate.")
+                base_folder = "backup/[emmcID]/restore/emummc" if is_emummc else "backup/[emmcID]/restore"
+                CustomDialog(self, title="Backup Folder Not Found",
+                             message=f"Could not find {base_folder} folder on SD card.\n\nPlease ensure you've created a NAND backup using Hekate.")
                 return
-            
+
             # Confirm with user
-            msg = (f"Copy BOOT files to SD card?\n\n"
+            target_type_label = "emuMMC" if is_emummc else "eMMC"
+            msg = (f"Copy BOOT files to SD card for {target_type_label}?\n\n"
                    f"From: {output_path}\n"
                    f"To:   {restore_path}\n\n"
                    f"This will overwrite any existing BOOT0/BOOT1 files.")
@@ -2405,9 +2437,12 @@ class SwitchGuiApp(tk.Tk):
         target_drive = potential_drives[0]
         target_size_gb = target_drive['size_gb']
         target_path = target_drive['path']
-        
+
+        # Store the drive type for later use when copying boot files
+        self.last_target_drive_type = target_drive.get('type', 'eMMC GPP')
+
         # Confirm with user
-        msg = (f"Found target eMMC:\n\nPath: {target_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
+        msg = (f"Found target {target_drive.get('type', 'eMMC')}:\n\nPath: {target_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
                "WARNING: ALL DATA ON THIS DRIVE WILL BE PERMANENTLY ERASED.\n\n"
                "This will perform a complete Level 3 recovery. Continue?")
         
@@ -2975,9 +3010,12 @@ class SwitchGuiApp(tk.Tk):
         
         target_drive = potential_drives[0]
         drive_path = target_drive['path']
-        
+
+        # Store the drive type for later use when copying boot files
+        self.last_target_drive_type = target_drive.get('type', 'eMMC GPP')
+
         # --- ADDED: Confirmation Pop-up for Level 1 ---
-        msg = (f"Found target eMMC:\n\nPath: {drive_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
+        msg = (f"Found target {target_drive.get('type', 'eMMC')}:\n\nPath: {drive_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
                "This will start the Level 1 System Restore process.\n"
                "User data like saves and games will be preserved.\n\nContinue?")
         
@@ -3156,9 +3194,12 @@ class SwitchGuiApp(tk.Tk):
         
         target_drive = potential_drives[0]
         drive_path = target_drive['path']
-        
+
+        # Store the drive type for later use when copying boot files
+        self.last_target_drive_type = target_drive.get('type', 'eMMC GPP')
+
         # --- ADDED: Confirmation Pop-up for Level 2 ---
-        msg = (f"Found target eMMC:\n\nPath: {drive_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
+        msg = (f"Found target {target_drive.get('type', 'eMMC')}:\n\nPath: {drive_path}\nSize: {target_drive['size']}\nModel: {target_drive['model']}\n\n"
                "WARNING: This will start the Level 2 Full Rebuild process.\n"
                "ALL USER DATA (saves, games) WILL BE PERMANENTLY ERASED.\n\nContinue?")
         
