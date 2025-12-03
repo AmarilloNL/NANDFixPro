@@ -5,8 +5,6 @@ import tkinter as tk
 import stat
 import psutil
 import os
-import ctypes
-from ctypes import wintypes
 import hashlib
 import struct
 from tkinter import colorchooser
@@ -687,7 +685,6 @@ from pathlib import Path
 import threading
 import subprocess
 import re
-import ctypes
 import configparser
 import pythoncom
 
@@ -2544,12 +2541,12 @@ class SwitchGuiApp(tk.Tk):
             return
         
         match = re.search(r"([A-Z]:)", output)
-        if not match: 
+        if not match:
             self._log("ERROR: Could not determine drive letter.")
             return
-        
+
         drive_letter_str = match.group(1)
-        drive_letter = Path(drive_letter_str)
+        drive_letter = Path(drive_letter_str + "\\")
         self._log(f"--- SUCCESS: SYSTEM mounted to {drive_letter}")
         
         try:
@@ -3100,7 +3097,7 @@ class SwitchGuiApp(tk.Tk):
         match = re.search(r"([A-Z]:)", output)
         if not match: return self._log("ERROR: Could not determine drive letter.")
         drive_letter_str = match.group(1)
-        drive_letter = Path(drive_letter_str)
+        drive_letter = Path(drive_letter_str + "\\")
         self._log("--- SYSTEM partition mounted")
 
         try:
@@ -3295,8 +3292,8 @@ class SwitchGuiApp(tk.Tk):
         try:
             versioned_folder = next(d for d in emmchaccgen_out_dir.iterdir() if d.is_dir())
             source_system_path = versioned_folder / "SYSTEM"
-            
-            success = self._selective_copy_system_contents(source_system_path, Path(drive_letter_str))
+
+            success = self._selective_copy_system_contents(source_system_path, Path(drive_letter_str + "\\"))
             if not success:
                 return
             self._log("--- SUCCESS: New system files injected into donor SYSTEM.")
@@ -3357,54 +3354,8 @@ class SwitchGuiApp(tk.Tk):
         self.button_states["copy_boot"] = "active"
         self._update_button_colors()
 
-def is_admin():
-    try: return ctypes.windll.shell32.IsUserAnAdmin()
-    except: return False
-
 if __name__ == "__main__":
-    # --- START: ADDED DEPENDENCY INSTALLER ---
-    import subprocess
-    import sys
-    import importlib
-
-    def install_dependencies():
-        """Checks for and installs required packages if they are missing."""
-        required_packages = ['wmi', 'psutil']
-        for package in required_packages:
-            try:
-                # Try to import the package to see if it's installed
-                importlib.import_module(package)
-                print(f"INFO: Dependency '{package}' is already installed.")
-            except ImportError:
-                print(f"INFO: Dependency '{package}' not found. Attempting to install...")
-                try:
-                    # Use sys.executable to ensure pip from the correct python environment is used
-                    # Use flags to suppress installation output unless there's an error
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package],
-                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"SUCCESS: Successfully installed '{package}'.")
-                except subprocess.CalledProcessError:
-                    # If installation fails, show a clear error message box and exit
-                    error_msg = (f"Failed to automatically install the required package: '{package}'.\n\n"
-                                 f"Please install it manually by opening a command prompt/terminal and running:\n\n"
-                                 f"pip install {package}")
-                    print(f"ERROR: {error_msg}")
-                    ctypes.windll.user32.MessageBoxW(0, error_msg, "Dependency Error", 0x10) # 0x10 = MB_ICONERROR
-                    sys.exit(1) # Exit the script if a critical dependency can't be installed
-
-    install_dependencies()
-    # --- END: ADDED DEPENDENCY INSTALLER ---
-
-    # --- WRAP THE APP STARTUP IN A TRY/EXCEPT BLOCK ---
-    app = None
-    try:
-        if is_admin():
-            app = SwitchGuiApp()
-            app.mainloop()
-        else:
-            # Relaunch as admin
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-    except Exception as e:
-        # If any error happens here, the excepthook at the top will catch it,
-        # log it to error_log.txt, and exit the program safely.
-        raise e
+    # Note: Admin privileges and dependencies are handled by NandFixProLauncher.exe
+    # This allows the main script to remain clean and avoid antivirus false positives
+    app = SwitchGuiApp()
+    app.mainloop()
